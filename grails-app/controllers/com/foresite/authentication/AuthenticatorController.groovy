@@ -1,147 +1,117 @@
 package com.foresite.authentication
 
-import grails.converters.*
 import java.util.concurrent.*
+
 
 class AuthenticatorController {
 
     def authenticatorService
     def grailsApplication
     
-    def index(){
-        []
-    }
-    
-    def check(){
-        def key = session['authenticator.key']
-        
-        def timeUnits = new Date().getTime() / TimeUnit.SECONDS.toMillis(30) as Long
-        
-        return render([result:authenticatorService.checkCode(key, params.code as Long, timeUnits)] as JSON)
-    }
+    def authenticate() {
+        def config = grailsApplication.config.authenticator
 
-    def isAuthenticated(){
-        def authenticatorSessionVarName = grailsApplication.config.authenticator.sessionVariableName ?: "authenticator"
-
-        def expireDays = grailsApplication.config.authenticator.expireDays ?: 30
-        def excludeControllers = grailsApplication.config.authenticator.excludeControllers ?: []
-
-        def authenticator
-
-        if ( grailsApplication.config.authenticator.useSession){
-            authenticator = Authenticator.get(session[authenticatorSessionVarName])
-        } else {
-            authenticator = Authenticator.findByUsername(grailsApplication.config.authenticator.getUser())
+        def username = config.getUser()
+        if (!username) {
+            return redirect(uri: '/')
         }
 
-        def authenticated = authenticator ? authenticator.lastAuthentication?.after(new Date()-expireDays) : false
+        def authenticator = Authenticator.findByUsernameIlike(username)
 
-        return render([result:[authenticated:authenticated,
-                               hasAuthenticator:authenticator != null,
-                               authenticatorEnabled:grailsApplication.config.authenticator.enabled], ] as JSON)
-    }
-    
-    def authenticate(){
-        
-        def authenticatorSessionVarName = grailsApplication.config.authenticator.sessionVariableName ?: "authenticator"
-        
-        def authenticator = Authenticator.findByUsernameIlike(grailsApplication.config.authenticator.getUser())
-             
-        if (!authenticator){
+        if (!authenticator) {
             return redirect(uri:"/authenticator/register")
         }
-        
-        def key = authenticator.secretKey
-        
-        if (!params.code){
-            if (params.format == "popup") {
-                return render(template:"popup", model:[message:"Authenticate with this service.",authenticator:authenticator])
-            }
-            return render(view:"authenticate", model:[message:"Authenticate with this service.",authenticator:authenticator])
+        if (!params.code) {
+            return render(view: "authenticate")
         }
+
         def authCode = params.code.replaceAll("\\s","")
 
         if (!authCode.isNumber()) {
-            return [error:"Incorrect code"]
+            if (request.xhr) {
+                return [ result: true ]
+            }
+            else {
+                return render(view: "authenticate")
+            }
         }
 
         def timeUnits = new Date().getTime() / TimeUnit.SECONDS.toMillis(30) as Long
                   
-        if (authenticatorService.checkCode(key, authCode as Long, timeUnits)){
-            flash.message = "Authentication successful"
-          
+        if (authenticatorService.checkCode(authenticator.secretKey, authCode as Long, timeUnits)) {
             authenticator.lastAuthentication = new Date()
-                    
             authenticator.save(flush:true)
-            
-            session[authenticatorSessionVarName] = authenticator.id
 
-            if (params.format != "json") {
-                return redirect(uri: params.next ? params.next : "/")
-            } else {
-                return render([message:"Authentication Successful"] as JSON)
+            if (request.xhr) {
+                return [ result: true ]
             }
-
-        } else {
+            else {
+                return redirect(uri: params.next ? params.next : "/")
+            }
+        }
+        else {
             authenticator.failedAuthentications += 1
             authenticator.save()
-            
-            return [error:"Incorrect code."]
+
+            if (request.xhr) {
+                return [ result: false ]
+            }
+            else {
+                return render(view: "authenticate")
+            }
         }
     }
-
-
     
-    def register(){
-        def authenticatorSessionVarName = grailsApplication.config.authenticator.sessionVariableName ?: "authenticator"
-        def hostname = grailsApplication.config.authenticator.hostname ?: "example.com"
-        def issuerName = grailsApplication.config.authenticator.issuerName ?: "Default Issuer"
-        
-        def authenticator = Authenticator.findByUsernameIlike(grailsApplication.config.authenticator.getUser())
-        
-        if (authenticator){
-            return render(view:"error", model:[message:"An authenticator is already registered to your user, you cannot register another one."])
+    def register() {
+        def config = grailsApplication.config.authenticator
+
+        def username = config.getUser()
+        if (!username) {
+            return redirect(uri: '/')
         }
-                   
-        // use the getUser closure to get the username that we will associate with this.
-        
-        def username = grailsApplication.config.authenticator.getUser()
-        
-        if (!params.code){
-            // create a key temporarily with the authenticator - stored in the session, probably can be more secure with this
-                  
+
+        def hostname = config.hostname ?: "example.com"
+        def issuerName = config.issuerName ?: "Default Issuer"
+
+        if (Authenticator.countByUsernameIlike(username)) {
+            return render(view: "error", model: [ message: "An authenticator is already registered to your account, you cannot register another one." ])
+        }
+
+        if (!params.code) {
             def key = session['authenticator.key'] ?: authenticatorService.generateKey()
-        
             session['authenticator.key'] = key
             
-            def email =  username.split("@")
-            
-            def url = authenticatorService.generateQRCodeURL(email[0], email.length > 1 ? username.split("@")[1] : hostname, key, issuerName)
+            def email = username.split("@")
+            def url = authenticatorService.generateQRCodeURL(email[0], email.length > 1 ? email[1] : hostname, key, issuerName)
         
-            return render(view:"register", model:[key:key, url:url])
-        } else {
+            return render(view: "register", model: [ url: url ])
+        }
+        else {
             def key = session['authenticator.key']
                                   
             def timeUnits = new Date().getTime() / TimeUnit.SECONDS.toMillis(30) as Long
             
-            if (!authenticatorService.checkCode(key, params.code as Long, timeUnits)){
-                return render(view:"register", model:[message:"register", error:"Code doesn't match"])
+            if (!authenticatorService.checkCode(key, params.code as Long, timeUnits)) {
+                if (request.xhr) {
+                    return [ result: false ]
+                }
+                else {
+                    return render(view: "register", model: [message: "register", error: "Code doesn't match"])
+                }
             }
                         
-            authenticator = new Authenticator(secretKey:key, lastAuthentication:new Date(), username:username)                     
+            def authenticator = new Authenticator(secretKey: key, lastAuthentication: new Date(), username: username)
                   
-            if (authenticator.save()){
-                if (grailsApplication.config.authenticator.useSession){
-                    session[authenticatorSessionVarName] = authenticator.id
-                    session['authenticator.key'] = null; // clear the authenticator key.
+            if (authenticator.save()) {
+                session['authenticator.key'] = null
+
+                if (request.xhr) {
+                    return [ result: true ]
                 }
-                
-                return render(view:"success", model:[message:"You have successfully setup two factor authentication."])
-            } else {
-                println authenticator.error
+                else {
+                    return render(view: "success", model: [message: "You have successfully setup two factor authentication."])
+                }
             }
         }
-        
-        
     }
 }

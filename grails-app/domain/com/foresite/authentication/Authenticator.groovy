@@ -12,12 +12,8 @@ class Authenticator {
     
     Date lastAuthentication
     
-    int failedAuthentications   = 0
+    int failedAuthentications = 0
 
-    static constraints = {
-       
-    }
-    
     static mapping = {
         id generator:"uuid"
     }

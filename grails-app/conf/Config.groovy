@@ -22,8 +22,10 @@ log4j = {
 }
 
 authenticator.enabled = true
-authenticator.useSession = true
 authenticator.expireDays = 30
-authenticator.getUsername = {
-    throw new IllegalArgumentException("Define getUsername() in Config.groovy")
+authenticator.isEnabledForUser = {
+    throw new IllegalArgumentException("Define isEnabledForUser() in Config.groovy")
+}
+authenticator.getUser = {
+    throw new IllegalArgumentException("Define getUser() in Config.groovy")
 }
