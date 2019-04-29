@@ -28,14 +28,9 @@ class AuthenticatorService {
         return encodedKey
         
     }
-    def generateQRCodeURL (String user,
-        String host,
-        String secret,
-        String issuer) {
-        
-        String format = "https://chart.googleapis.com/chart?chs=200x200&chld=H|0&cht=qr&chl=otpauth://totp/%s@%s%%3Fsecret%%3D%s%%26issuer%%3D%s";
-        
-        return String.format(format, user, host, secret, issuer);
+
+    def generateQRCodeURL (String user, String host, String secret, String issuer) {
+        return String.format("otpauth://totp/%s:%s@%s?secret=%s&issuer=%s", issuer, user, host, secret, issuer)
     }
     
     boolean checkCode(String secret,long code, long t){
